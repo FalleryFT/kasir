@@ -14,8 +14,6 @@ class Struk extends Model
     protected $fillable = [
         'userid',
         'pelangganid',
-        'produkid',
-        'jumlah_produk',
         'tanggal_penjualan',
         'subtotal',
         'diskon',
@@ -29,6 +27,10 @@ class Struk extends Model
         'updated_by'
     ];
 
+    // ======================
+    // RELATIONSHIPS
+    // ======================
+
     public function user()
     {
         return $this->belongsTo(User::class, 'userid');
@@ -37,11 +39,6 @@ class Struk extends Model
     public function pelanggan()
     {
         return $this->belongsTo(Pelanggan::class, 'pelangganid');
-    }
-
-    public function produk()
-    {
-        return $this->belongsTo(Produk::class, 'produkid');
     }
 
     public function details()

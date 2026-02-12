@@ -11,6 +11,7 @@ use App\Models\Pelanggan;
 use App\Models\LaporanStok;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class KasirController extends Controller
 {
@@ -121,8 +122,13 @@ class KasirController extends Controller
 
 
     public function checkout(Request $request)
-    {
+{
+    DB::beginTransaction();
+
+    try {
+
         $cart = session()->get('cart', []);
+
         if (empty($cart)) {
             return back()->with('error', 'Keranjang kosong.');
         }
@@ -133,23 +139,32 @@ class KasirController extends Controller
         $totalDiskon = 0;
         $totalBayar = 0;
 
-        // Periksa stok
+        // =========================
+        // CEK STOK DULU
+        // =========================
+        $produks = Produk::whereIn('id', array_keys($cart))->get()->keyBy('id');
+
         foreach ($cart as $produkId => $item) {
-            $produk = Produk::find($produkId);
+
+            $produk = $produks[$produkId] ?? null;
+
             if (!$produk || $produk->stock < $item['jumlah']) {
                 return back()->with('error', "Stok untuk {$item['nama']} tidak mencukupi.");
             }
         }
 
-        // Proses transaksi
+        // =========================
+        // PROSES PRODUK & KURANGI STOK
+        // =========================
         foreach ($cart as $produkId => $item) {
-            $produk = Produk::find($produkId);
+
+            $produk = $produks[$produkId];
+
             $stokSebelumnya = $produk->stock;
             $stokSetelah = $stokSebelumnya - $item['jumlah'];
 
             $produk->decrement('stock', $item['jumlah']);
 
-            // Simpan laporan stok
             LaporanStok::create([
                 'produk_id' => $produkId,
                 'stok_sebelumnya' => $stokSebelumnya,
@@ -157,46 +172,68 @@ class KasirController extends Controller
                 'created_by' => Auth::user()->username ?? 'system',
             ]);
 
-            $subtotal = $item['harga_asli'] * $item['jumlah'];
-            $diskonRp = ($item['harga_asli'] - $item['harga']) * $item['jumlah']; // Harga sudah termasuk diskon
+            $diskonRp = ($item['harga_asli'] - $item['harga']) * $item['jumlah'];
             $hargaTotal = $item['harga'] * $item['jumlah'];
 
             $totalDiskon += $diskonRp;
             $totalBayar += $hargaTotal;
         }
 
-        // Hitung Pajak PPN 12%
+        // =========================
+        // HITUNG PAJAK
+        // =========================
         $totalPajak = $totalBayar * 0.12;
-        $totalAkhir = $totalBayar + $totalPajak; // Total pembayaran sebelum pengurangan poin
+        $totalSebelumPoin = $totalBayar + $totalPajak;
 
-        // Ambil jumlah pembayaran dari request
+        // =========================
+        // GUNAKAN POIN (1 poin = Rp100)
+        // =========================
+        $poinDigunakanRupiah = 0;
+        $poinDipakai = 0;
+
+        if ($pelanggan && $request->poin_use > 0) {
+
+            $poinTersedia = $pelanggan->poin;
+
+            $rupiahDariPoin = $poinTersedia * 100;
+
+            // Batasi maksimal hanya sebesar total transaksi
+            $poinDigunakanRupiah = min($rupiahDariPoin, $totalSebelumPoin);
+
+            $poinDipakai = floor($poinDigunakanRupiah / 100);
+
+            $pelanggan->decrement('poin', $poinDipakai);
+        }
+
+        // =========================
+        // TOTAL AKHIR (TIDAK BOLEH NEGATIF)
+        // =========================
+        $totalAkhir = max(0, $totalSebelumPoin - $poinDigunakanRupiah);
+
+        // =========================
+        // PEMBAYARAN
+        // =========================
         $jumlahBayar = (int) str_replace('.', '', $request->pembayaran);
 
-        // Hitung kembalian
+        if ($totalAkhir > 0 && $jumlahBayar < $totalAkhir) {
+            return back()->with('error', 'Jumlah uang tidak cukup.');
+        }
+
+        if ($totalAkhir == 0) {
+            $jumlahBayar = 0;
+        }
+
         $kembalian = $jumlahBayar - $totalAkhir;
 
-        // Pastikan jumlah yang dibayarkan cukup
-        if ($jumlahBayar < $totalAkhir) {
-            return back()->with('error', 'Jumlah uang yang dibayarkan kurang dari total yang harus dibayar.');
-        }
+        // =========================
+        // HITUNG POIN BARU (2% dari total sebelum pajak)
+        // =========================
+        $poinBaru = floor(($totalBayar * 0.02) / 100);
 
-        // Gunakan Poin jika tersedia
-        $poinDigunakan = 0;
-        if ($pelanggan && $request->poin_use > 0) {
-            $poinTersedia = $pelanggan->poin;
-            $poinDalamRupiah = $poinTersedia * 1; // 1 poin = Rp 100
-            $poinDigunakan = min($poinDalamRupiah, $totalAkhir); // Tidak bisa lebih dari total bayar
-
-            // Kurangi poin pelanggan
-            $pelanggan->decrement('poin', floor($poinDigunakan / 1)); // Kurangi sesuai konversi
-            $totalAkhir -= $poinDigunakan; // Kurangi total bayar dengan poin
-        }
-
-        // Hitung Poin Baru (2% dari total sebelum pajak)
-        $poinBaru = floor($totalBayar * 0.02);
-
-        // Simpan ke laporan
-        Laporan::create([
+        // =========================
+        // SIMPAN LAPORAN
+        // =========================
+        $laporan = Laporan::create([
             'userid' => Auth::id(),
             'pelangganid' => $pelanggan->id ?? null,
             'tanggal_waktu' => now(),
@@ -204,53 +241,68 @@ class KasirController extends Controller
             'subtotal' => $totalBayar + $totalDiskon,
             'diskonRp' => $totalDiskon,
             'pajak' => $totalPajak,
-            'poin_use' => $poinDigunakan / 1, // Simpan dalam satuan poin
-            'hargatotal' => $totalAkhir, // Total akhir setelah pengurangan poin
+            'poin_use' => $poinDipakai,
+            'hargatotal' => $totalAkhir,
             'created_by' => Auth::user()->username,
             'updated_by' => Auth::user()->username,
         ]);
 
-        // Tambahkan Poin Baru ke Pelanggan
+        // =========================
+        // TAMBAH POIN BARU
+        // =========================
         if ($pelanggan) {
             $pelanggan->increment('poin', $poinBaru);
         }
 
-        // Simpan ke struk
+        // =========================
+        // BUAT STRUK UTAMA
+        // =========================
         $struk = Struk::create([
             'userid' => Auth::id(),
             'pelangganid' => $pelanggan->id ?? null,
-            'produkid' => $produkId,
-            'jumlah_produk' => $item['jumlah'],
             'tanggal_penjualan' => now(),
-            'subtotal' => $subtotal,
-            'diskon' => $diskonRp,
+            'subtotal' => $totalBayar + $totalDiskon,
+            'diskon' => $totalDiskon,
             'pajak' => $totalPajak,
-            'total_pembayaran' => $totalAkhir, // Total setelah pajak & diskon
-            'jumlah_bayar' => $jumlahBayar, // Jumlah yang dibayarkan customer
-            'kembalian' => $kembalian, // Kembalian yang diterima customer
-            'poin_digunakan' => $poinDigunakan, // Poin yang digunakan (konversi)
-            'poin_didapat' => $poinBaru, // Poin yang diperoleh
+            'total_pembayaran' => $totalAkhir,
+            'jumlah_bayar' => $jumlahBayar,
+            'kembalian' => $kembalian,
+            'poin_digunakan' => $poinDipakai,
+            'poin_didapat' => $poinBaru,
             'created_by' => Auth::user()->username,
             'updated_by' => Auth::user()->username,
         ]);
-        
-        // Simpan rincian struk ke dalam `struk_details`
-    foreach ($cart as $produkId => $item) {
-        StrukDetail::create([
-            'struk_id' => $struk->id,
-            'produkid' => $produkId,
-            'harga_satuan' => $item['harga_asli'],
-            'jumlah' => $item['jumlah'],
-            'subtotal' => $item['harga_asli'] * $item['jumlah'],
-            'created_by' => Auth::user()->username,
-            'updated_by' => Auth::user()->username,
-        ]);
-    }
+
+        // =========================
+        // SIMPAN DETAIL STRUK
+        // =========================
+        foreach ($cart as $produkId => $item) {
+
+            StrukDetail::create([
+                'struk_id' => $struk->id,
+                'produkid' => $produkId,
+                'harga_satuan' => $item['harga'],
+                'jumlah' => $item['jumlah'],
+                'subtotal' => $item['harga'] * $item['jumlah'],
+                'created_by' => Auth::user()->username,
+                'updated_by' => Auth::user()->username,
+            ]);
+        }
 
         session()->forget(['cart', 'member']);
 
+        DB::commit();
+
         return redirect()->route('struk.show', $struk->id);
+
+    } catch (\Exception $e) {
+
+        DB::rollBack();
+
+        return back()->with('error', 'Terjadi kesalahan: ' . $e->getMessage());
     }
+}
+
 
     public function logoutkasir(Request $request)
     {

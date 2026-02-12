@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="id">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -11,28 +12,33 @@
             body * {
                 visibility: hidden;
             }
-            #invoice, #invoice * {
+
+            #invoice,
+            #invoice * {
                 visibility: visible;
             }
+
             #invoice {
                 position: absolute;
                 left: 0;
                 top: 0;
                 width: 100%;
             }
+
             .no-print {
                 display: none;
             }
         }
     </style>
 </head>
+
 <body style="font-family: 'Poppins', sans-serif; background-color: #f5f5f5;">
     <div class="container mt-3 py-3" id="invoice">
         <div class="text-center mb-4">
             <h2>Invoice Pembelanjaan</h2>
             <p>{{ date('d-m-Y H:i:s', strtotime($struk->tanggal_penjualan)) }}</p>
         </div>
-        
+
         <div class="row mb-3">
             <div class="col-md-6">
                 <p><strong>Nama Kasir:</strong> {{ $struk->created_by }}</p>
@@ -42,7 +48,7 @@
                 <p><strong>Tipe Pelanggan:</strong> {{ $struk->pelanggan->tipe ?? 'Reguler' }}</p>
             </div>
         </div>
-        
+
         <h4>Daftar Barang Belanjaan</h4>
         <div class="table-responsive mb-3">
             <table class="table table-bordered">
@@ -55,17 +61,18 @@
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach ($struk->details as $detail)
+                    @foreach($struk->details as $detail)
                         <tr>
-                            <td>{{ $detail->produk->nama_produk }}</td>
-                            <td>Rp{{ number_format($detail->harga_satuan, 0, ',', '.') }}</td>
+                            <td>{{ $detail->produk->nama ?? 'Produk Dihapus' }}</td>
+                            <td>{{ number_format($detail->harga_satuan) }}</td>
                             <td>{{ $detail->jumlah }}</td>
-                            <td>Rp{{ number_format($detail->subtotal, 0, ',', '.') }}</td>
+                            <td>{{ number_format($detail->subtotal) }}</td>
                         </tr>
                     @endforeach
+
                 </tbody>
             </table>
-            
+
         </div>
 
         <hr>
@@ -74,15 +81,18 @@
             <div class="col-md-6">
                 <p><strong>Subtotal Harga:</strong> Rp {{ number_format($struk->subtotal, 0, ',', '.') }}</p>
                 <p><strong>Diskon:</strong> Rp {{ number_format($struk->diskon, 0, ',', '.') }}</p>
-                <p><strong>Poin Membership Digunakan:</strong> Rp {{ number_format($struk->poin_digunakan, 0, ',', '.') }}</p>
+                <p><strong>Poin Membership Digunakan:</strong> Rp
+                    {{ number_format($struk->poin_digunakan, 0, ',', '.') }}</p>
                 <p><strong>PPN (12%):</strong> Rp {{ number_format($struk->pajak, 0, ',', '.') }}</p>
             </div>
             <div class="col-md-6 text-end">
                 <p><strong>Total Pembayaran:</strong> Rp {{ number_format($struk->total_pembayaran, 0, ',', '.') }}</p>
-                <p><strong>Jumlah Uang yang Dibayar:</strong> Rp {{ number_format($struk->jumlah_bayar, 0, ',', '.') }}</p>
+                <p><strong>Jumlah Uang yang Dibayar:</strong> Rp {{ number_format($struk->jumlah_bayar, 0, ',', '.') }}
+                </p>
                 <p><strong>Kembalian:</strong> Rp {{ number_format($struk->kembalian, 0, ',', '.') }}</p>
                 @if(in_array($struk->pelanggan->tipe ?? 'Reguler', ['VIP', 'VVIP']))
-                    <p><strong>Poin Membership Didapat:</strong> {{ number_format($struk->poin_didapat, 0, ',', '.') }} Poin</p>
+                    <p><strong>Poin Membership Didapat:</strong> {{ number_format($struk->poin_didapat, 0, ',', '.') }} Poin
+                    </p>
                 @endif
             </div>
         </div>
@@ -93,4 +103,5 @@
         </div>
     </div>
 </body>
+
 </html>
